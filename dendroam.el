@@ -1,4 +1,3 @@
-```
 ;;; dendroam.el --- Description -*- lexical-binding: t; -*-
 ;;
 ;; Copyright (C) 2021 Victor Rodriguez
@@ -295,4 +294,3 @@ Returns t if STR1 should come before STR2, nil otherwise."
 (with-eval-after-load 'org-roam-mode ;; The customization var is in org-roam-mode.el
   (add-to-list 'org-roam-mode-sections #'dendroam-insert-hierarchy-section))
 ;;; dendroam.el ends here
-```
