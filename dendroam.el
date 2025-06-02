@@ -27,11 +27,11 @@
 (defvar dendroam-capture-templates
   '(("t" "Time note" entry
      "* %?"
-     :if-new (file+head "${current-file}.%<%Y.%m.%d.%M%S%3N>.org"
+     :if-new (file+head "${current-file}___%<%Y___m___d___%M%S%3N>.org"
                         "#+title: %^{title}\n\n"))
     ("s" "Scratch note" entry
      "* %?"
-     :if-new (file+head "scratch.%<%Y.%m.%d.%M%S%3N>.org"
+     :if-new (file+head "scratch___%<%Y___m___d___%M%S%3N>.org"
                         "#+title: %^{title}\n\n")))
 
   "Some utils templates for different type of notes such us time notes
@@ -49,16 +49,17 @@ or sratch notes")
     (last
      (split-string
       (org-roam-node-title node)
-      "\\.")))))
+      "/")))))
 
 (defun dendroam-format-hierarchy (file)
-  "Formats node's path, to get the hierarchy whithout the title
+  "Formats node's path, to get the hierarchy without the title
 where title will be the last child of the hierarchy:
-from the filename this.is.a.hierarchy.note-title.org
-returns this.is.a.hierarchy"
+from the filename this___is___a___hierarchy___note-title.org
+returns this/is/a/hierarchy"
   (let* ((base-name (file-name-base file))
-         (hierarchy-no-title (file-name-base base-name)))
-    hierarchy-no-title))
+         (hierarchy-no-title (file-name-base base-name))
+         (hierarchy-with-slashes (replace-regexp-in-string "___" "/" hierarchy-no-title)))
+    hierarchy-with-slashes))
 
 (cl-defmethod org-roam-node-hierarchy (node)
   "Gets node hierarchy by file name"
@@ -70,12 +71,13 @@ returns this.is.a.hierarchy"
 ;; Refactor functions
 
 (defun dendroam-fetch-same-hierarchy-files (hierarchy)
-  "Gets all the nodes that share the same HIERARCHY totally or parcially"
-  (let ((files
-         (mapcar #'car (org-roam-db-query [:select [file]
-                                           :from nodes
-                                           :where (like file $r1)]
-                                          (concat "%" hierarchy "%")))))
+  "Gets all the nodes that share the same HIERARCHY totally or partially"
+  (let* ((hierarchy-pattern (replace-regexp-in-string "/" "___" hierarchy))
+         (files
+          (mapcar #'car (org-roam-db-query [:select [file]
+                                            :from nodes
+                                            :where (like file $r1)]
+                                           (concat "%" hierarchy-pattern "%")))))
     files))
 
 (defun dendroam-refactor-hierarchy (&optional current)
@@ -122,7 +124,7 @@ the current file"
 ;; Useful notes functions
 (defun dendroam-insert-time-note(&optional goto)
   "Creates a time note in the current level of the hierarchy.
-Time notes have the format: current.Y.m.d.MS3N
+Time notes have the format: current___Y___m___d___MS3N
 The file is created using a template from `dendroam-capture-templates'"
   (interactive "P")
   (org-roam-capture- :goto (when goto '(4))
@@ -133,7 +135,7 @@ The file is created using a template from `dendroam-capture-templates'"
 
 (defun dendroam-insert-scratch-note(&optional goto)
   "Creates a time note in the current level of the hierarchy.
-Time notes have the format: current.Y.m.d.MS3N
+Time notes have the format: current___Y___m___d___MS3N
 The file is created using a template from `dendroam-capture-templates'"
   (interactive "P")
   (org-roam-capture- :goto (when goto '(4))
@@ -145,11 +147,11 @@ The file is created using a template from `dendroam-capture-templates'"
 ;; Org roam overrides to allow these features
 (eval-after-load "org-roam"
   '(cl-defmethod org-roam-node-slug ((node org-roam-node))
-     "Override org-roam-node-slug to generate a dendron-like slug.
+     "Override org-roam-node-slug to generate a logseq-compatible slug.
 Handles Unicode by removing non-spacing marks (like accents).
-Replaces spaces and most non-alphanumeric chars (except '.') with hyphens,
-and cleans up resulting hyphens. Preserves case initially, then downcases.
-Example: ' Lang.Elisp.What_Is Ã©? ' -> 'lang.elisp.what-is-e'"
+Replaces spaces and most non-alphanumeric chars (except '/') with hyphens,
+and converts '/' to '___' for filename compatibility.
+Example: ' Lang/Elisp/What_Is Ã©? ' -> 'lang___elisp___what-is-e'"
      (let ((title (org-roam-node-title node)))
        ;; --- Helper Functions ---
        (cl-flet* (;; Checks if a character is a non-spacing mark (e.g., accent)
@@ -176,18 +178,20 @@ Example: ' Lang.Elisp.What_Is Ã©? ' -> 'lang.elisp.what-is-e'"
 
                 ;; 2. Define sequence of regex replacements for slug cleanup
                 (replacement-rules
-                 '(;; Replace most non-alphanumeric chars (EXCEPT '.') with a hyphen.
+                 '(;; Replace most non-alphanumeric chars (EXCEPT '/') with a hyphen.
                    ;; Includes replacing underscores.
-                   ("[^[:alnum:][:digit:].]+" . "-")
+                   ("[^[:alnum:][:digit:]/]+" . "-")
                    ;; Collapse consecutive hyphens into one.
                    ("--+" . "-")
-                   ;; Remove hyphens immediately before or after a dot.
-                   ("-\\." . ".")
-                   ("\\.-" . ".")
+                   ;; Remove hyphens immediately before or after a slash.
+                   ("-/" . "/")
+                   ("/-" . "/")
                    ;; Remove leading hyphens. (Use -+ to catch multiples)
                    ("^-+" . "")
                    ;; Remove trailing hyphens. (Use -+ to catch multiples)
-                   ("-+$" . "")))
+                   ("-+$" . "")
+                   ;; Convert '/' to '___' for filename compatibility
+                   ("/" . "___")))
 
                 ;; 3. Apply all replacement rules sequentially
                 (slug (-reduce-from #'apply-replacement slug replacement-rules)))
@@ -205,7 +209,7 @@ If NODE has no hierarchy, fetches all nodes and filters for top-level in Elisp."
          (current-file (when node (org-roam-node-file node)))
          (current-hierarchy (if current-file (dendroam-format-hierarchy current-file) nil))
          (current-top-level (when current-hierarchy
-                              (car (s-split "\\." current-hierarchy)))) ; Get part before first dot
+                              (car (s-split "/" current-hierarchy)))) ; Get part before first slash
          ;; Variables to hold results
          files-from-db)
     (if current-top-level
@@ -227,9 +231,9 @@ If NODE has no hierarchy, fetches all nodes and filters for top-level in Elisp."
         (setq files-from-db (condition-case nil
                                 (mapcar #'car (org-roam-db-query [:select [file] :from nodes]))
                               (error (message "Dendroam: Error querying all hierarchies from DB.") nil)))
-        ;; Process all filenames but filter for top-level only (no dots)
+        ;; Process all filenames but filter for top-level only (no slashes)
         (setq relevant-hierarchies
-              (seq-filter (lambda (h) (and h (not (s-contains? "." h))))
+              (seq-filter (lambda (h) (and h (not (s-contains? "/" h))))
                           (mapcar #'dendroam-format-hierarchy files-from-db)))))
     files-from-db))
 
@@ -239,10 +243,10 @@ If NODE has no hierarchy, fetches all nodes and filters for top-level in Elisp."
   (org-link-make-string (car hierarchy) (nth 1 hierarchy)))
 
 (defun my-hierarchical-sort-comparator (node1 node2)
-  "Comparator function for sorting dot-separated hierarchy strings.
+  "Comparator function for sorting slash-separated hierarchy strings.
 Returns t if STR1 should come before STR2, nil otherwise."
-  (let ((parts1 (split-string (replace-regexp-in-string "\\.org\\'" "" (car node1)) "\\."))
-        (parts2 (split-string (replace-regexp-in-string "\\.org\\'" "" (car node2)) "\\.")))
+  (let ((parts1 (split-string (dendroam-format-hierarchy (car node1)) "/"))
+        (parts2 (split-string (dendroam-format-hierarchy (car node2)) "/")))
     (catch 'done
       (let ((len1 (length parts1))
             (len2 (length parts2)))
@@ -256,7 +260,7 @@ Returns t if STR1 should come before STR2, nil otherwise."
         (< len1 len2)))))
 
 (defun sort-hierarchical-nodes (node-list)
-  "Sorts a list of dot-separated hierarchy strings hierarchically."
+  "Sorts a list of slash-separated hierarchy strings hierarchically."
   (sort node-list #'my-hierarchical-sort-comparator))
 
 ;; Updated section function using the optimized hierarchy getter
@@ -268,7 +272,7 @@ Returns t if STR1 should come before STR2, nil otherwise."
          (current-file (when node (org-roam-node-file node)))
          (current-hierarchy (if current-file (dendroam-format-hierarchy current-file) nil))
          (current-top-level (when current-hierarchy
-                              (car (s-split "\\." current-hierarchy))))
+                              (car (s-split "/" current-hierarchy))))
          (heading (if current-top-level
                       (format "Hierarchies (%s)" current-top-level)
                     "Hierarchies (Top Level)")))
@@ -278,7 +282,7 @@ Returns t if STR1 should come before STR2, nil otherwise."
       (let ((inhibit-read-only t))
         (insert (format "* %s\n\n" heading))
         (dolist (hierarchy sorted-hierarchies)
-          (let* ((level (length (s-split "\\." (car hierarchy))))
+          (let* ((level (length (s-split "/" (dendroam-format-hierarchy (car hierarchy)))))
                  (indent-level (max 0 (- level 1)))
                  (indent-string (s-repeat (* indent-level 2) " ")))
             (insert indent-string "- ")
